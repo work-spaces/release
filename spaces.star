@@ -252,6 +252,7 @@ run_add_exec(
         "--owner=work-spaces",
         "--repo=packages",
         "--tag={}".format(packages_tag),
+        "--is-latest",
     ],
     help = "",
     deps = deps(
@@ -272,6 +273,7 @@ run_add_exec(
         "--owner=work-spaces",
         "--repo=sdk",
         "--tag={}".format(packages_tag),
+        "--is-latest",
     ],
     help = "",
     deps = deps(

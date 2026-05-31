@@ -1,6 +1,6 @@
 # release
-This repo contains the needed workflow to release a new version of spaces.
 
+This repo is used to test and release `spaces`.
 
 ```sh
 export SPACES_TAG=v0.15.45
