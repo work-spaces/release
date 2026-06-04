@@ -4,7 +4,7 @@
 
 load("//@star/sdk/star/std/args.star", "args_opt", "args_parse", "args_parser")
 load(
-    "star/utils.star",
+    "internal/utils.star",
     "utils_create_pr",
     "utils_find_existing_pr",
     "utils_git",
@@ -16,7 +16,7 @@ load(
 
 def main():
     """
-    Open a PR that bumps a pinned version via literal find-and-replace.
+    Open a PR that runs work-spaces/packages check-latest script.
     """
     spec = args_parser(
         name = "update-packages",
@@ -60,10 +60,38 @@ def main():
             ]),
         )
 
-    # Create a new branch to update the packages for the new tag
-    branch_name = branch_prefix + new_version
+    # Case 3: branch already exists without an open PR. Fail loudly so we
+    # do not accidentally overwrite prior work.
     utils_refresh_main(workdir)
-    utils_git(args = ["switch", "-c", branch_name], cwd = workdir)
+    local_branch_exists = utils_git(
+        ["show-ref", "--verify", "--quiet", "refs/heads/{}".format(branch)],
+        cwd = workdir,
+        check = False,
+    )["status"] == 0
+    remote_branch_exists = utils_git(
+        ["ls-remote", "--exit-code", "--heads", "origin", branch],
+        cwd = workdir,
+        check = False,
+    )["status"] == 0
+    if local_branch_exists or remote_branch_exists:
+        branch_locations = []
+        if local_branch_exists:
+            branch_locations.append("local checkout")
+        if remote_branch_exists:
+            branch_locations.append("origin")
+        assert_on(
+            False,
+            "\n".join([
+                "",
+                "Branch `{}` already exists in {} for {}; refusing to create a new one.".format(branch, " and ".join(branch_locations), repo_slug),
+                "",
+                "Delete the existing branch (or merge/reset the existing change), then re-run this rule.",
+                "",
+            ]),
+        )
+
+    # Case 4: create a branch, run the update, and open a PR.
+    utils_git(args = ["switch", "-c", branch], cwd = workdir)
     utils_run("script/check-latest.exec.star", args = [], cwd = workdir)
 
     title = "Check latest packages with spaces {}".format(new_version)

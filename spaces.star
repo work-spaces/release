@@ -18,6 +18,7 @@ STARLARK_FILES = [
     "scripts/gh-workflow-dispatch.exec.star",
     "scripts/publish-release-binaries.exec.star",
     "scripts/testlab.exec.star",
+    "scripts/update-docs.exec.star",
     "scripts/update-packages.exec.star",
     "scripts/update-version.exec.star",
     "scripts/validate-tag.exec.star",
@@ -72,8 +73,6 @@ spaces_tag = workspace_load_value("RELEASE_SPACES_TAG")
 sdk_tag = workspace_load_value("RELEASE_SDK_TAG")
 packages_tag = workspace_load_value("RELEASE_PACKAGES_TAG")
 
-rlog.info("Spaces tag: {}".format(spaces_tag))
-
 tags = {"spaces": spaces_tag, "sdk": sdk_tag, "packages": packages_tag}
 tag_deps = []
 for tag, tag_value in tags.items():
@@ -126,6 +125,20 @@ run_add_exec(
 )
 
 run_add_exec(
+    "clear_spaces_prerelease",
+    command = "gh",
+    args = [
+        "release",
+        "edit",
+        spaces_tag,
+        "--repo=github.com/work-spaces/spaces",
+        "--prerelease=false",
+    ],
+    help = "",
+    deps = [":publish_binaries"],
+)
+
+run_add_exec(
     "update_spaces_latest_release",
     command = "gh",
     args = [
@@ -136,7 +149,7 @@ run_add_exec(
         "--latest",
     ],
     help = "",
-    deps = [":publish_binaries"],
+    deps = [":clear_spaces_prerelease"],
 )
 
 run_add_exec(
@@ -184,8 +197,9 @@ def _add_update_version_rule(
         help_text,
         rule_deps = []):
     """Register a ``run_add_exec`` that delegates to the update-version script."""
+    pr_rule = name + "_pr"
     run_add_exec(
-        name,
+        pr_rule,
         command = "release/scripts/update-version.exec.star",
         args = [
             "--owner=work-spaces",
@@ -200,6 +214,21 @@ def _add_update_version_rule(
         deps = deps(
             rules = rule_deps,
             files = ["scripts/update-version.exec.star"],
+        ),
+    )
+
+    run_add_exec(
+        name,
+        command = "release/scripts/create-release.exec.star",
+        args = [
+            "--owner=work-spaces",
+            "--repo={}".format(repo),
+            "--tag={}".format(spaces_tag),
+            "--latest-release",
+        ],
+        deps = deps(
+            rules = [pr_rule],
+            files = ["scripts/create-release.exec.star"],
         ),
     )
 
@@ -223,6 +252,27 @@ _add_update_version_rule(
     replace = "install-spaces@{}".format(spaces_tag),
     help_text = "Open a PR bumping work-spaces/spaces-checkout-run to {}".format(spaces_tag),
     rule_deps = [":update_install_spaces"],
+)
+
+run_add_exec(
+    "update_docs",
+    command = "release/scripts/update-docs.exec.star",
+    args = [
+        "--host=github.com",
+        "--owner=work-spaces",
+        "--repo=work-spaces.github.io",
+        "--spaces-tag={}".format(spaces_tag),
+        "--workdir=docs/work-spaces.github.io",
+    ],
+    help = "Update and publish docs for the current spaces release",
+    deps = deps(
+        rules = [
+            ":update_spaces_latest_release",
+        ],
+        files = [
+            "scripts/update-docs.exec.star",
+        ],
+    ),
 )
 
 run_add_exec(
@@ -272,7 +322,7 @@ run_add_exec(
         "--host=github.com",
         "--owner=work-spaces",
         "--repo=sdk",
-        "--tag={}".format(packages_tag),
+        "--tag={}".format(sdk_tag),
         "--is-latest",
     ],
     help = "",
@@ -294,5 +344,6 @@ run_add(
         ":update_spaces_latest_release",
         ":update_install_spaces",
         ":update_spaces_checkout_run",
+        ":update_docs",
     ],
 )

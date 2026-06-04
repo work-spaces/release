@@ -56,7 +56,7 @@ Behavior:
 load("//@star/sdk/star/std/args.star", "args_opt", "args_parse", "args_parser")
 load("//@star/sdk/star/std/fs.star", "fs_exists", "fs_mkdir", "fs_read_text", "fs_write_text")
 load("//@star/sdk/star/std/string.star", "string_contains", "string_regex_find_all", "string_replace")
-load("star/utils.star", "utils_create_pr", "utils_find_existing_pr", "utils_git", "utils_refresh_main", "utils_repo_slug")
+load("internal/utils.star", "utils_create_pr", "utils_find_existing_pr", "utils_git", "utils_refresh_main", "utils_repo_slug")
 
 def _write_marker(marker_file, repo_slug, new_version, status, pr_url):
     """Write a small markdown note recording the outcome."""
@@ -141,14 +141,24 @@ def main():
     assert_on(fs_exists(target_path), "{} does not exist in {}".format(file_path, repo_slug))
     contents = fs_read_text(target_path)
 
-    # ``--search`` is a regex; ``--replace`` is the literal post-substitution
-    # marker we use to detect that the bump has already been merged.
+    # ``--search`` is a regex. ``--replace`` is usually a literal
+    # post-substitution marker, but may also include capture references.
     has_search = len(string_regex_find_all(search, contents)) > 0
     has_replace = string_contains(contents, replace)
+    updated = string_replace(contents, search, replace, regex = True)
+    has_change = updated != contents
 
-    # Case 1: bump is already merged on main. Record and exit.
+    # Case 1a: bump is already merged on main and --replace is a literal marker.
     if not has_search and has_replace:
         print("`{}` is already present on main; bump has already been merged.".format(replace))
+        _write_marker(marker_file, repo_slug, new_version, "already merged on main", "")
+        return
+
+    # Case 1b: regex replacement is already effectively applied (for example,
+    # capture-based replacements where --replace itself is not a literal file
+    # substring). Record and exit.
+    if has_search and not has_change:
+        print("Regex replacement produced no change; bump has already been merged on main.")
         _write_marker(marker_file, repo_slug, new_version, "already merged on main", "")
         return
 
@@ -174,8 +184,7 @@ def main():
         )
 
     # Case 3: do the bump and open a PR.
-    updated = string_replace(contents, search, replace, regex = True)
-    assert_on(updated != contents, "Find-and-replace produced no change in {}".format(file_path))
+    assert_on(has_change, "Find-and-replace produced no change in {}".format(file_path))
     fs_write_text(target_path, updated)
 
     utils_git(["checkout", "-B", branch], cwd = workdir)

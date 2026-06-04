@@ -27,7 +27,7 @@ load(
     "args_parser",
 )
 load("//@star/sdk/star/std/process.star", "process_options", "process_run", "process_stderr_inherit", "process_stdout_inherit")
-load("star/utils.star", "utils_release_exists", "utils_repo_slug")
+load("internal/utils.star", "utils_release_exists", "utils_repo_slug")
 
 def _create_release(repo_slug: str, tag: str, is_latest: bool) -> None:
     print("Creating pre-release {} on {}".format(tag, repo_slug))
