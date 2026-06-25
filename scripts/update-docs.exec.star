@@ -5,8 +5,11 @@ Update and publish work-spaces.github.io docs for a released spaces tag.
 This script orchestrates the docs publish flow by composing existing release
 helpers:
 
-1. Uses ``release/scripts/update-version.exec.star`` to bump
-   ``SPACES_VERSION`` in the docs repo (``spaces.star``) using regex search.
+1. Uses ``release/scripts/update-version.exec.star`` to bump versions in the docs repo using regex search:
+
+   - ``SPACES_VERSION`` in ``spaces.star`` from ``--spaces-tag``
+   - ``@star/sdk`` ``rev`` in ``0.checkout.spaces.star`` from ``--sdk-tag``
+   - ``@star/packages`` ``rev`` in ``0.checkout.spaces.star`` from ``--packages-tag``
 2. Refreshes the docs checkout to ``origin/main`` and verifies docs generation
    by running:
 
@@ -43,6 +46,17 @@ _GH_DISPATCH_SCRIPT = "release/scripts/gh-workflow-dispatch.exec.star"
 #   2) optional version context and closing quote (for example: `.docs"`)
 _SPACES_VERSION_LINE_REGEX = r'(SPACES_VERSION\s*=\s*")\d+\.\d+\.\d+([\w.+-]*")'
 
+# In docs/work-spaces.github.io/0.checkout.spaces.star, match the sdk repo block
+# and replace only the `rev` value.
+_SDK_REV_LINE_REGEX = r'("url"\s*:\s*"https://github.com/work-spaces/sdk",\s*"rev"\s*:\s*")v\d+\.\d+\.\d+([\w.+-]*")'
+
+# In docs/work-spaces.github.io/0.checkout.spaces.star, match the packages repo
+# block and replace only the `rev` value.
+_PACKAGES_REV_LINE_REGEX = r'("url"\s*:\s*"https://github.com/work-spaces/packages",\s*"rev"\s*:\s*")v\d+\.\d+\.\d+([\w.+-]*")'
+
+_CHECKOUT_FILE_PATH = "0.checkout.spaces.star"
+_SPACES_FILE_PATH = "spaces.star"
+
 def _arg(parsed: dict, key: str, fallback = ""):
     """Best-effort compatibility helper for dashed/underscored arg names."""
     underscored = key.replace("-", "_")
@@ -59,15 +73,11 @@ def _spaces_core_version_from_tag(tag: str) -> str:
     version = _spaces_version_from_tag(tag)
     matches = string_regex_find_all(r"^\d+\.\d+\.\d+", version)
     for match in matches:
-        return match
+        return match.get("match", "")
     assert_on(False, "--spaces-tag must contain a semver core x.y.z")
     return ""
 
-def _run_update_version(owner: str, repo: str, file_path: str, workdir: str, spaces_tag: str) -> None:
-    # Keep any existing context after x.y.z (for example `.docs`) while
-    # replacing only the semver core from `--spaces-tag`.
-    replace = "${{1}}{}${{2}}".format(_spaces_core_version_from_tag(spaces_tag))
-
+def _run_update_version(owner: str, repo: str, file_path: str, workdir: str, search: str, replace: str, new_version: str, branch_prefix: str) -> None:
     utils_run(
         _UPDATE_VERSION_SCRIPT,
         args = [
@@ -75,12 +85,53 @@ def _run_update_version(owner: str, repo: str, file_path: str, workdir: str, spa
             "--repo={}".format(repo),
             "--file-path={}".format(file_path),
             "--workdir={}".format(workdir),
-            "--search={}".format(_SPACES_VERSION_LINE_REGEX),
+            "--search={}".format(search),
             "--replace={}".format(replace),
-            "--new-version={}".format(spaces_tag),
-            "--branch-prefix=update-docs-spaces-",
+            "--new-version={}".format(new_version),
+            "--branch-prefix={}".format(branch_prefix),
         ],
         check = True,
+    )
+
+def _run_update_spaces_version(owner: str, repo: str, workdir: str, spaces_tag: str) -> None:
+    # Keep any existing context after x.y.z (for example `.docs`) while
+    # replacing only the semver core from `--spaces-tag`.
+    replace = "$1{}$2".format(_spaces_core_version_from_tag(spaces_tag))
+    _run_update_version(
+        owner,
+        repo,
+        _SPACES_FILE_PATH,
+        workdir,
+        _SPACES_VERSION_LINE_REGEX,
+        replace,
+        spaces_tag,
+        "update-docs-spaces-",
+    )
+
+def _run_update_sdk_version(owner: str, repo: str, workdir: str, sdk_tag: str) -> None:
+    replace = "$1{}$2".format(sdk_tag)
+    _run_update_version(
+        owner,
+        repo,
+        _CHECKOUT_FILE_PATH,
+        workdir,
+        _SDK_REV_LINE_REGEX,
+        replace,
+        sdk_tag,
+        "update-docs-sdk-",
+    )
+
+def _run_update_packages_version(owner: str, repo: str, workdir: str, packages_tag: str) -> None:
+    replace = "$1{}$2".format(packages_tag)
+    _run_update_version(
+        owner,
+        repo,
+        _CHECKOUT_FILE_PATH,
+        workdir,
+        _PACKAGES_REV_LINE_REGEX,
+        replace,
+        packages_tag,
+        "update-docs-packages-",
     )
 
 def _verify_docs_build(workdir: str, docs_target: str) -> None:
@@ -134,7 +185,7 @@ def main():
             args_opt("--sdk-tag", help = "SDK release tag (e.g. v0.15.45)"),
             args_opt("--packages-tag", help = "Packages release tag (e.g. v0.15.45)"),
             args_opt("--workdir", default = "docs/work-spaces.github.io", help = "Directory of the docs repo checkout"),
-            args_opt("--file-path", default = "spaces.star", help = "Path in docs repo containing SPACES_VERSION"),
+            args_opt("--file-path", default = "docs/work-spaces.github.io", help = "Path to the docs repo checkout (informational; version updates target 0.checkout.spaces.star and spaces.star)"),
             args_opt("--docs-target", default = "//work-spaces.github.io:work-spaces.github.io_archive", help = "Docs archive target to run for verification"),
             args_opt("--workflow", default = "pages.yaml", help = "Workflow filename to dispatch"),
             args_opt("--dispatch-ref", default = "", help = "Ref for workflow dispatch. Defaults to --spaces-tag."),
@@ -191,15 +242,15 @@ def main():
     print("Workflow:      {}".format(workflow))
     print("Dispatch ref:  {}".format(dispatch_ref))
 
-    # Step 1: bump SPACES_VERSION in docs repo (opens PR if needed).
-    print("\nUpdating SPACES_VERSION for spaces release...")
-    _run_update_version(owner, repo, file_path, workdir, spaces_tag)
+    # Step 1: bump versions in docs repo (opens PRs if needed).
+    print("\nUpdating SPACES_VERSION in {} for spaces release...".format(_SPACES_FILE_PATH))
+    _run_update_spaces_version(owner, repo, workdir, spaces_tag)
 
-    #print("\nUpdating SPACES_VERSION for SDK release...")
-    #_run_update_version(owner, repo, file_path, workdir, sdk_tag)
+    print("\nUpdating SDK rev in {} for SDK release...".format(_CHECKOUT_FILE_PATH))
+    _run_update_sdk_version(owner, repo, workdir, sdk_tag)
 
-    #print("\nUpdating SPACES_VERSION for packages release...")
-    #_run_update_version(owner, repo, file_path, workdir, packages_tag)
+    print("\nUpdating packages rev in {} for packages release...".format(_CHECKOUT_FILE_PATH))
+    _run_update_packages_version(owner, repo, workdir, packages_tag)
 
     # Ensure local checkout is synchronized with main before verification,
     # including the case where update-version was a no-op due to marker reuse.

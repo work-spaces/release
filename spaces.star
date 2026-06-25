@@ -259,7 +259,7 @@ run_add_exec(
         "--owner=work-spaces",
         "--repo=packages",
         "--workdir=@star/packages",
-        "--new-version={}".format(spaces_tag),
+        "--new-version={}".format(packages_tag),
     ],
     deps = deps(
         rules = [
@@ -284,7 +284,7 @@ run_add_exec(
     help = "",
     deps = deps(
         rules = [
-            #":update_package",
+            ":update_package",
         ] + tag_deps,
         files = [
             "scripts/create-release.exec.star",
@@ -346,6 +346,6 @@ run_add(
         ":update_spaces_latest_release",
         ":update_install_spaces",
         ":update_spaces_checkout_run",
-        #":update_docs",
+        ":update_docs",
     ],
 )
