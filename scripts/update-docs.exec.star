@@ -131,6 +131,8 @@ def main():
             args_opt("--owner", default = "work-spaces", help = "Repository owner (user or organization)"),
             args_opt("--repo", default = "work-spaces.github.io", help = "Repository name"),
             args_opt("--spaces-tag", help = "Current spaces tag (e.g. v0.15.45)"),
+            args_opt("--sdk-tag", help = "SDK release tag (e.g. v0.15.45)"),
+            args_opt("--packages-tag", help = "Packages release tag (e.g. v0.15.45)"),
             args_opt("--workdir", default = "docs/work-spaces.github.io", help = "Directory of the docs repo checkout"),
             args_opt("--file-path", default = "spaces.star", help = "Path in docs repo containing SPACES_VERSION"),
             args_opt("--docs-target", default = "//work-spaces.github.io:work-spaces.github.io_archive", help = "Docs archive target to run for verification"),
@@ -146,6 +148,8 @@ def main():
     owner = _arg(parsed, "owner", "")
     repo = _arg(parsed, "repo", "")
     spaces_tag = _arg(parsed, "spaces-tag", "")
+    sdk_tag = _arg(parsed, "sdk-tag", "")
+    packages_tag = _arg(parsed, "packages-tag", "")
     workdir = _arg(parsed, "workdir", "")
     file_path = _arg(parsed, "file-path", "")
     docs_target = _arg(parsed, "docs-target", "")
@@ -157,6 +161,8 @@ def main():
     assert_on(host != "", "--host is required")
     assert_on(owner != "", "--owner is required")
     assert_on(repo != "", "--repo is required")
+    assert_on(sdk_tag != "", "--sdk-tag is required")
+    assert_on(packages_tag != "", "--packages-tag is required")
     assert_on(workdir != "", "--workdir is required")
     assert_on(file_path != "", "--file-path is required")
     assert_on(docs_target != "", "--docs-target is required")
@@ -165,6 +171,8 @@ def main():
     assert_on(timeout_seconds > 0, "--timeout must be > 0")
 
     spaces_version = _spaces_version_from_tag(spaces_tag)
+    sdk_version = _spaces_version_from_tag(sdk_tag)
+    packages_version = _spaces_version_from_tag(packages_tag)
     if dispatch_ref == "":
         dispatch_ref = spaces_tag
 
@@ -173,6 +181,10 @@ def main():
     print("Repository:    {} (host: {})".format(repo_slug, host))
     print("spaces tag:    {}".format(spaces_tag))
     print("spaces ver:    {}".format(spaces_version))
+    print("SDK tag:       {}".format(sdk_tag))
+    print("SDK ver:       {}".format(sdk_version))
+    print("packages tag:  {}".format(packages_tag))
+    print("packages ver:  {}".format(packages_version))
     print("Workdir:       {}".format(workdir))
     print("File path:     {}".format(file_path))
     print("Docs target:   {}".format(docs_target))
@@ -180,7 +192,14 @@ def main():
     print("Dispatch ref:  {}".format(dispatch_ref))
 
     # Step 1: bump SPACES_VERSION in docs repo (opens PR if needed).
+    print("\nUpdating SPACES_VERSION for spaces release...")
     _run_update_version(owner, repo, file_path, workdir, spaces_tag)
+
+    #print("\nUpdating SPACES_VERSION for SDK release...")
+    #_run_update_version(owner, repo, file_path, workdir, sdk_tag)
+
+    #print("\nUpdating SPACES_VERSION for packages release...")
+    #_run_update_version(owner, repo, file_path, workdir, packages_tag)
 
     # Ensure local checkout is synchronized with main before verification,
     # including the case where update-version was a no-op due to marker reuse.

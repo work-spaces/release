@@ -14,7 +14,6 @@ STARLARK_FILES = [
     "1.checkout.spaces.star",
     "spaces.star",
     "scripts/create-release.exec.star",
-    "scripts/docs.exec.star",
     "scripts/gh-workflow-dispatch.exec.star",
     "scripts/publish-release-binaries.exec.star",
     "scripts/testlab.exec.star",
@@ -57,7 +56,6 @@ run_add_exec(
         rules = ["//spaces:install_release"],
         files = [
             "scripts/testlab.exec.star",
-            "//testlab/spaces-e2e-testlab/**",
             "//{}/bin/spaces".format(SPACES_INSTALL_ROOT),
         ],
     ),
@@ -255,27 +253,6 @@ _add_update_version_rule(
 )
 
 run_add_exec(
-    "update_docs",
-    command = "release/scripts/update-docs.exec.star",
-    args = [
-        "--host=github.com",
-        "--owner=work-spaces",
-        "--repo=work-spaces.github.io",
-        "--spaces-tag={}".format(spaces_tag),
-        "--workdir=docs/work-spaces.github.io",
-    ],
-    help = "Update and publish docs for the current spaces release",
-    deps = deps(
-        rules = [
-            ":update_spaces_latest_release",
-        ],
-        files = [
-            "scripts/update-docs.exec.star",
-        ],
-    ),
-)
-
-run_add_exec(
     "update_package",
     command = "release/scripts/update-packages.exec.star",
     args = [
@@ -302,12 +279,12 @@ run_add_exec(
         "--owner=work-spaces",
         "--repo=packages",
         "--tag={}".format(packages_tag),
-        "--is-latest",
+        "--latest-release",
     ],
     help = "",
     deps = deps(
         rules = [
-            ":update_package",
+            #":update_package",
         ] + tag_deps,
         files = [
             "scripts/create-release.exec.star",
@@ -323,7 +300,7 @@ run_add_exec(
         "--owner=work-spaces",
         "--repo=sdk",
         "--tag={}".format(sdk_tag),
-        "--is-latest",
+        "--latest-release",
     ],
     help = "",
     deps = deps(
@@ -336,6 +313,31 @@ run_add_exec(
     ),
 )
 
+run_add_exec(
+    "update_docs",
+    command = "release/scripts/update-docs.exec.star",
+    args = [
+        "--host=github.com",
+        "--owner=work-spaces",
+        "--repo=work-spaces.github.io",
+        "--spaces-tag={}".format(spaces_tag),
+        "--sdk-tag={}".format(sdk_tag),
+        "--packages-tag={}".format(packages_tag),
+        "--workdir=docs/work-spaces.github.io",
+    ],
+    help = "Update and publish docs for the current spaces release",
+    deps = deps(
+        rules = [
+            ":update_spaces_latest_release",
+            ":create_sdk_release",
+            ":create_packages_release",
+        ],
+        files = [
+            "scripts/update-docs.exec.star",
+        ],
+    ),
+)
+
 run_add(
     "publish",
     deps = [
@@ -344,6 +346,6 @@ run_add(
         ":update_spaces_latest_release",
         ":update_install_spaces",
         ":update_spaces_checkout_run",
-        ":update_docs",
+        #":update_docs",
     ],
 )

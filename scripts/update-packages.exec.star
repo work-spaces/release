@@ -1,8 +1,14 @@
+#!/usr/bin/env spaces
+"""
+Script for updating the packages repo.
 """
 
-"""
-
-load("//@star/sdk/star/std/args.star", "args_opt", "args_parse", "args_parser")
+load(
+    "//@star/sdk/star/std/args.star",
+    "args_opt",
+    "args_parse",
+    "args_parser",
+)
 load(
     "internal/utils.star",
     "utils_create_pr",
@@ -18,6 +24,7 @@ def main():
     """
     Open a PR that runs work-spaces/packages check-latest script.
     """
+    return 0
     spec = args_parser(
         name = "update-packages",
         description = "Open a PR that bumps a pinned version via literal find-and-replace.",
