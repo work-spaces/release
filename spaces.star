@@ -115,6 +115,7 @@ run_add_exec(
         "--owner=work-spaces",
         "--repo=spaces",
         "--tag={}".format(spaces_tag),
+        "--draft",
     ],
     help = "",
     deps = deps(

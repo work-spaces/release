@@ -108,10 +108,18 @@ def utils_release_exists(repo_slug: str, tag: str) -> bool:
     ))
     return result["status"] == 0
 
-def utils_create_release(repo_slug: str, tag: str, is_latest: bool) -> None:
-    """Create a GitHub release for ``tag`` with auto-generated notes."""
-    print("Creating pre-release {} on {}".format(tag, repo_slug))
+def utils_create_release(repo_slug: str, tag: str, is_latest: bool, is_draft: bool = False) -> None:
+    """Create a GitHub release for ``tag`` with auto-generated notes.
+
+    When ``is_draft`` is True, the release is created as a draft so that
+    binaries can be attached before it is published. This is required for
+    repositories with immutable releases enabled, where a release becomes
+    immutable (and rejects new assets) as soon as it is published.
+    """
+    print("Creating {} {} on {}".format("draft release" if is_draft else "pre-release", tag, repo_slug))
     release_args = ["--latest"] if is_latest else ["--prerelease"]
+    if is_draft:
+        release_args = release_args + ["--draft"]
     utils_gh([
         "release",
         "create",
