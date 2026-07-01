@@ -128,7 +128,9 @@ def _run_update_version(owner: str, repo: str, file_path: str, workdir: str, sea
 def _run_update_spaces_version(owner: str, repo: str, workdir: str, spaces_tag: str, status_file: str) -> str:
     # Keep any existing context after x.y.z (for example `.docs`) while
     # replacing only the semver core from `--spaces-tag`.
-    replace = "$1{}$2".format(_spaces_core_version_from_tag(spaces_tag))
+    # Use ${1}/${2} (braced) so the version text that follows $1 is not parsed
+    # as part of a Rust-regex capture-group name.
+    replace = "${{1}}{}${{2}}".format(_spaces_core_version_from_tag(spaces_tag))
     return _run_update_version(
         owner,
         repo,
@@ -142,7 +144,9 @@ def _run_update_spaces_version(owner: str, repo: str, workdir: str, spaces_tag: 
     )
 
 def _run_update_sdk_version(owner: str, repo: str, workdir: str, sdk_tag: str, status_file: str) -> str:
-    replace = "$1{}$2".format(sdk_tag)
+    # Braced ${1}/${2}: an unbraced $1 would greedily consume the leading `v`
+    # of the tag as part of the capture-group name (Rust regex replacement).
+    replace = "${{1}}{}${{2}}".format(sdk_tag)
     return _run_update_version(
         owner,
         repo,
@@ -156,7 +160,9 @@ def _run_update_sdk_version(owner: str, repo: str, workdir: str, sdk_tag: str, s
     )
 
 def _run_update_packages_version(owner: str, repo: str, workdir: str, packages_tag: str, status_file: str) -> str:
-    replace = "$1{}$2".format(packages_tag)
+    # Braced ${1}/${2}: an unbraced $1 would greedily consume the leading `v`
+    # of the tag as part of the capture-group name (Rust regex replacement).
+    replace = "${{1}}{}${{2}}".format(packages_tag)
     return _run_update_version(
         owner,
         repo,

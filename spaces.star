@@ -115,7 +115,6 @@ run_add_exec(
         "--owner=work-spaces",
         "--repo=spaces",
         "--tag={}".format(spaces_tag),
-        "--draft",
     ],
     help = "",
     deps = deps(
@@ -208,6 +207,19 @@ run_add_exec(
 # Matches semver-ish tags like ``v0.15.44``, ``v0.15.45-alpha2``, ``v1.2.3+build``.
 _VERSION_REGEX = r"v\d+\.\d+\.\d+[\w.+-]*"
 
+# NOTE: The status-producing rules below (update_install_spaces,
+# update_spaces_checkout_run, create_packages_release, update_docs) exit
+# successfully even when they only recorded "Need to merge PR" in their status
+# file -- a required human action is an expected outcome, not a failure. Their
+# real completion condition (the PR being merged into main) lives in remote
+# GitHub state that spaces cannot observe. If these rules declared their script
+# as a glob/file input, spaces would hash that unchanged input, treat the prior
+# successful run as up to date, and SKIP them on re-run -- so they would never
+# re-check the remote and flip their status to "Complete" after a merge. We
+# therefore give them rule-only dependencies (no glob inputs) so they re-run on
+# every invocation and re-evaluate the merge state. The scripts are idempotent
+# and short-circuit cheaply once the bump has landed.
+
 run_add_exec(
     "update_install_spaces",
     command = "release/scripts/update-version.exec.star",
@@ -223,9 +235,9 @@ run_add_exec(
         "--latest-release",
     ],
     help = "Open a PR bumping work-spaces/install-spaces to {} and then create a release".format(spaces_tag),
+    # Rule-only deps (no glob input) so this always re-runs; see note above.
     deps = deps(
         rules = [":update_spaces_latest_release"],
-        files = ["scripts/update-version.exec.star"],
     ),
 )
 
@@ -244,9 +256,9 @@ run_add_exec(
         "--latest-release",
     ],
     help = "Open a PR bumping work-spaces/spaces-checkout-run to {} and then create a release".format(spaces_tag),
+    # Rule-only deps (no glob input) so this always re-runs; see note above.
     deps = deps(
         rules = [":update_install_spaces"],
-        files = ["scripts/update-version.exec.star"],
     ),
 )
 
@@ -268,13 +280,11 @@ run_add_exec(
         "--latest-release",
     ],
     help = "",
+    # Rule-only deps (no glob input) so this always re-runs; see note above.
     deps = deps(
         rules = [
             ":update_spaces_latest_release",
         ] + tag_deps,
-        files = [
-            "scripts/update-packages.exec.star",
-        ],
     ),
 )
 
@@ -313,14 +323,12 @@ run_add_exec(
         "--status-file={}".format(_UPDATE_DOCS_STATUS),
     ],
     help = "Update and publish docs for the current spaces release",
+    # Rule-only deps (no glob input) so this always re-runs; see note above.
     deps = deps(
         rules = [
             ":update_spaces_latest_release",
             ":create_sdk_release",
             ":create_packages_release",
-        ],
-        files = [
-            "scripts/update-docs.exec.star",
         ],
     ),
 )
@@ -337,7 +345,7 @@ run_add_exec(
             ":update_spaces_latest_release",
             ":update_install_spaces",
             ":update_spaces_checkout_run",
-            ":update_docs",
+            #":update_docs",
         ],
         files = [
             "scripts/collect-results.exec.star",

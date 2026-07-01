@@ -41,7 +41,6 @@ def main():
             args_opt("--repo", help = "Repository name"),
             args_opt("--tag", help = "Tag to create the release for (will be created on the remote)"),
             args_flag("--latest-release", help = "Update the latest release on the repository (otherwise, use prerelease)"),
-            args_flag("--draft", help = "Create the release as a draft so binaries can be attached before it is published (required for immutable releases)"),
         ],
     )
     parsed = args_parse(spec)
@@ -51,7 +50,6 @@ def main():
     repo = parsed.get("repo", "")
     tag = parsed.get("tag", "")
     is_latest = parsed.get("latest_release", False)
-    is_draft = parsed.get("draft", False)
 
     assert_on(host != "", "--host is required")
     assert_on(owner != "", "--owner is required")
@@ -67,7 +65,7 @@ def main():
         print("Release {} already exists on {}; skipping creation.".format(tag, repo_slug))
         return
 
-    utils_create_release(repo_slug, tag, is_latest, is_draft)
-    print("{} {} created on {}.".format("Draft release" if is_draft else "Pre-release", tag, repo_slug))
+    utils_create_release(repo_slug, tag, is_latest)
+    print("Pre-release {} created on {}.".format(tag, repo_slug))
 
 main()

@@ -1,6 +1,6 @@
 #!/usr/bin/env spaces
 """
-Ensure that all per-OS/arch binaries are attached to a GitHub release.
+Ensure that all per-OS/arch binaries are attached to a GitHub pre-release.
 
 Given a host, owner, repo, and tag, this script:
 
@@ -11,12 +11,14 @@ Given a host, owner, repo, and tag, this script:
    ``work-spaces/spaces`` repository).
 3. If every expected asset is already attached, exits successfully without
    doing any work.
-4. Otherwise, the release must be in pre-release state (assets can only be
-   attached to a pre-release). If it is not, the script aborts.
+4. Otherwise, the release must still be a pre-release. The pipeline attaches
+   binaries while the release is a pre-release and only afterwards promotes it
+   to the latest release, so a non-pre-release with missing assets means the
+   steps ran out of order and the script aborts.
 5. If the release is a pre-release with missing assets, dispatches the
    ``build-and-publish.yaml`` workflow via
-   ``release/scripts/gh.exec.star`` with ``--field=tag=<tag>`` so the
-   workflow can build and upload the missing binaries.
+   ``release/scripts/gh-workflow-dispatch.exec.star`` with ``--field=tag=<tag>``
+   so the workflow can build and upload the missing binaries.
 
 Example::
 
@@ -54,7 +56,7 @@ def _view_release(repo_slug, tag):
             "--repo",
             repo_slug,
             "--json",
-            "isPrerelease,assets,tagName",
+            "isPrerelease,assets",
         ],
         stdout = process_stdout_capture(),
         stderr = process_stdout_capture(),
@@ -139,7 +141,7 @@ def main():
     missing = _missing_assets(expected, attached)
 
     if len(missing) == 0:
-        print("All {} expected binaries are already attached to {}; nothing to do.".format(
+        print("All {} expected binaries are already attached to {}.".format(
             len(expected),
             tag,
         ))
@@ -149,18 +151,36 @@ def main():
     for name in missing:
         print("  - {}".format(name))
 
-    is_prerelease = info.get("isPrerelease", False)
+    # Binaries are attached while the release is still a pre-release, before the
+    # pipeline promotes it to the latest release. A non-pre-release with missing
+    # assets means the release steps ran out of order.
     assert_on(
-        is_prerelease,
+        info.get("isPrerelease", False),
         ("Release {} on {} is not a pre-release but is missing binaries: {}. " +
-         "Binaries can only be attached to a pre-release.").format(
+         "The pipeline attaches binaries while the release is still a " +
+         "pre-release.").format(
             tag,
             repo_slug,
             missing,
         ),
     )
 
+    # The build-and-publish workflow both dispatches against ``--ref=<tag>`` and
+    # checks the source out at ``ref: <tag>``. A published pre-release already
+    # has its git tag, so the workflow can run without any extra tag setup.
     _dispatch_build_and_publish(host, owner, repo, tag)
-    print("Build-and-publish workflow completed for {}.".format(tag))
+
+    # Confirm every expected binary is now attached.
+    info = _view_release(repo_slug, tag)
+    still_missing = _missing_assets(expected, _attached_asset_names(info))
+    assert_on(
+        len(still_missing) == 0,
+        "Build-and-publish completed but binaries are still missing from {}: {}".format(
+            tag,
+            still_missing,
+        ),
+    )
+
+    print("Build-and-publish workflow completed and binaries attached to {}.".format(tag))
 
 main()
