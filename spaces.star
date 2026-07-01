@@ -5,7 +5,7 @@ See the README for details.
 """
 
 load("//@star/sdk/star/deps.star", "deps")
-load("//@star/sdk/star/run.star", "run_add", "run_add_exec")
+load("//@star/sdk/star/run.star", "run_add_exec")
 load("//@star/sdk/star/visibility.star", "visibility_private")
 load("//@star/sdk/star/ws.star", "workspace_get_env_var", "workspace_load_value")
 
@@ -17,6 +17,7 @@ STARLARK_FILES = [
     "scripts/gh-workflow-dispatch.exec.star",
     "scripts/publish-release-binaries.exec.star",
     "scripts/testlab.exec.star",
+    "scripts/collect-results.exec.star",
     "scripts/update-docs.exec.star",
     "scripts/update-packages.exec.star",
     "scripts/update-version.exec.star",
@@ -24,6 +25,10 @@ STARLARK_FILES = [
 ]
 
 SPACES_INSTALL_ROOT = workspace_get_env_var("SPACES_INSTALL_ROOT")
+
+spaces_tag = workspace_load_value("RELEASE_SPACES_TAG")
+sdk_tag = workspace_load_value("RELEASE_SDK_TAG")
+packages_tag = workspace_load_value("RELEASE_PACKAGES_TAG")
 
 run_add_exec(
     "check_starlark",
@@ -47,10 +52,16 @@ run_add_exec(
 )
 
 # Depends on spaces install release to use the latest
-# Runs the test labs
+# Runs the test labs. Skips itself when the release binaries for spaces_tag are
+# already published (see release/scripts/testlab.exec.star).
 run_add_exec(
     "testlab",
     command = "release/scripts/testlab.exec.star",
+    args = [
+        "--owner=work-spaces",
+        "--repo=spaces",
+        "--tag={}".format(spaces_tag),
+    ],
     help = "Checkout and run the testlab including the rcache test",
     deps = deps(
         rules = ["//spaces:install_release"],
@@ -67,9 +78,20 @@ run_add_exec(
     },
 )
 
-spaces_tag = workspace_load_value("RELEASE_SPACES_TAG")
-sdk_tag = workspace_load_value("RELEASE_SDK_TAG")
-packages_tag = workspace_load_value("RELEASE_PACKAGES_TAG")
+# JSON status files written by the release steps below. Each version-bump step
+# exits successfully but records whether a human action (such as merging a PR)
+# is still required. The ``publish`` rule collects these and fails if any
+# outstanding action remains.
+_INSTALL_SPACES_STATUS = "build/update-version/install-spaces-{}.status.json".format(spaces_tag)
+_SPACES_CHECKOUT_RUN_STATUS = "build/update-version/spaces-checkout-run-{}.status.json".format(spaces_tag)
+_UPDATE_DOCS_STATUS = "build/update-docs/work-spaces.github.io-{}.status.json".format(spaces_tag)
+_PACKAGES_STATUS = "build/update-packages/packages-{}.status.json".format(packages_tag)
+_STATUS_FILES = [
+    _INSTALL_SPACES_STATUS,
+    _SPACES_CHECKOUT_RUN_STATUS,
+    _UPDATE_DOCS_STATUS,
+    _PACKAGES_STATUS,
+]
 
 tags = {"spaces": spaces_tag, "sdk": sdk_tag, "packages": packages_tag}
 tag_deps = []
@@ -185,109 +207,72 @@ run_add_exec(
 # Matches semver-ish tags like ``v0.15.44``, ``v0.15.45-alpha2``, ``v1.2.3+build``.
 _VERSION_REGEX = r"v\d+\.\d+\.\d+[\w.+-]*"
 
-def _add_update_version_rule(
-        name,
-        repo,
-        file_path,
-        workdir,
-        search,
-        replace,
-        help_text,
-        rule_deps = []):
-    """Register a ``run_add_exec`` that delegates to the update-version script."""
-    pr_rule = name + "_pr"
-    run_add_exec(
-        pr_rule,
-        command = "release/scripts/update-version.exec.star",
-        args = [
-            "--owner=work-spaces",
-            "--repo={}".format(repo),
-            "--file-path={}".format(file_path),
-            "--workdir={}".format(workdir),
-            "--search={}".format(search),
-            "--replace={}".format(replace),
-            "--new-version={}".format(spaces_tag),
-        ],
-        help = help_text,
-        deps = deps(
-            rules = rule_deps,
-            files = ["scripts/update-version.exec.star"],
-        ),
-    )
-
-    run_add_exec(
-        name,
-        command = "release/scripts/create-release.exec.star",
-        args = [
-            "--owner=work-spaces",
-            "--repo={}".format(repo),
-            "--tag={}".format(spaces_tag),
-            "--latest-release",
-        ],
-        deps = deps(
-            rules = [pr_rule],
-            files = ["scripts/create-release.exec.star"],
-        ),
-    )
-
-_add_update_version_rule(
-    name = "update_install_spaces",
-    repo = "install-spaces",
-    file_path = "action.yml",
-    workdir = "install-spaces",
-    search = "version={}".format(_VERSION_REGEX),
-    replace = "version={}".format(spaces_tag),
-    help_text = "Open a PR bumping work-spaces/install-spaces to {}".format(spaces_tag),
-    rule_deps = [":update_spaces_latest_release"],
-)
-
-_add_update_version_rule(
-    name = "update_spaces_checkout_run",
-    repo = "spaces-checkout-run",
-    file_path = "action.yml",
-    workdir = "spaces-checkout-run",
-    search = "install-spaces@{}".format(_VERSION_REGEX),
-    replace = "install-spaces@{}".format(spaces_tag),
-    help_text = "Open a PR bumping work-spaces/spaces-checkout-run to {}".format(spaces_tag),
-    rule_deps = [":update_install_spaces"],
-)
-
 run_add_exec(
-    "update_package",
-    command = "release/scripts/update-packages.exec.star",
+    "update_install_spaces",
+    command = "release/scripts/update-version.exec.star",
     args = [
         "--owner=work-spaces",
-        "--repo=packages",
-        "--workdir=@star/packages",
-        "--new-version={}".format(packages_tag),
+        "--repo=install-spaces",
+        "--file-path=action.yml",
+        "--workdir=install-spaces",
+        "--search=version={}".format(_VERSION_REGEX),
+        "--replace=version={}".format(spaces_tag),
+        "--new-version={}".format(spaces_tag),
+        "--status-file={}".format(_INSTALL_SPACES_STATUS),
+        "--latest-release",
     ],
+    help = "Open a PR bumping work-spaces/install-spaces to {} and then create a release".format(spaces_tag),
     deps = deps(
-        rules = [
-            ":update_spaces_latest_release",
-        ],
-        files = [
-            "scripts/update-packages.exec.star",
-        ],
+        rules = [":update_spaces_latest_release"],
+        files = ["scripts/update-version.exec.star"],
     ),
 )
 
 run_add_exec(
+    "update_spaces_checkout_run",
+    command = "release/scripts/update-version.exec.star",
+    args = [
+        "--owner=work-spaces",
+        "--repo=spaces-checkout-run",
+        "--file-path=action.yml",
+        "--workdir=spaces-checkout-run",
+        "--search=install-spaces@{}".format(_VERSION_REGEX),
+        "--replace=install-spaces@{}".format(spaces_tag),
+        "--new-version={}".format(spaces_tag),
+        "--status-file={}".format(_SPACES_CHECKOUT_RUN_STATUS),
+        "--latest-release",
+    ],
+    help = "Open a PR bumping work-spaces/spaces-checkout-run to {} and then create a release".format(spaces_tag),
+    deps = deps(
+        rules = [":update_install_spaces"],
+        files = ["scripts/update-version.exec.star"],
+    ),
+)
+
+# Bumps work-spaces/packages to the latest packages, opens a PR, and creates
+# the packages release once that PR has been merged. The script halts (with a
+# message written under build/) whenever a PR needs to be reviewed and merged
+# by a human; re-run this rule after merging to create the release.
+run_add_exec(
     "create_packages_release",
-    command = "release/scripts/create-release.exec.star",
+    command = "release/scripts/update-packages.exec.star",
     args = [
         "--host=github.com",
         "--owner=work-spaces",
         "--repo=packages",
+        "--workdir=@star/packages",
         "--tag={}".format(packages_tag),
+        "--spaces-version={}".format(spaces_tag),
+        "--status-file={}".format(_PACKAGES_STATUS),
         "--latest-release",
     ],
     help = "",
     deps = deps(
         rules = [
-            ":update_package",
+            ":update_spaces_latest_release",
         ] + tag_deps,
         files = [
-            "scripts/create-release.exec.star",
+            "scripts/update-packages.exec.star",
         ],
     ),
 )
@@ -302,10 +287,10 @@ run_add_exec(
         "--tag={}".format(sdk_tag),
         "--latest-release",
     ],
-    help = "",
+    help = "Creates a release for work-spaces/sdk using what is currently in the main branch",
     deps = deps(
         rules = [
-            ":update_package",
+            ":create_packages_release",
         ] + tag_deps,
         files = [
             "scripts/create-release.exec.star",
@@ -324,6 +309,7 @@ run_add_exec(
         "--sdk-tag={}".format(sdk_tag),
         "--packages-tag={}".format(packages_tag),
         "--workdir=docs/work-spaces.github.io",
+        "--status-file={}".format(_UPDATE_DOCS_STATUS),
     ],
     help = "Update and publish docs for the current spaces release",
     deps = deps(
@@ -338,14 +324,22 @@ run_add_exec(
     ),
 )
 
-run_add(
+run_add_exec(
     "publish",
-    deps = [
-        ":create_packages_release",
-        ":create_sdk_release",
-        ":update_spaces_latest_release",
-        ":update_install_spaces",
-        ":update_spaces_checkout_run",
-        ":update_docs",
-    ],
+    command = "release/scripts/collect-results.exec.star",
+    args = ["--status-file={}".format(status_file) for status_file in _STATUS_FILES],
+    help = "Collect release step status files; fail if any human action (such as merging a PR) is still required",
+    deps = deps(
+        rules = [
+            ":create_packages_release",
+            ":create_sdk_release",
+            ":update_spaces_latest_release",
+            ":update_install_spaces",
+            ":update_spaces_checkout_run",
+            ":update_docs",
+        ],
+        files = [
+            "scripts/collect-results.exec.star",
+        ],
+    ),
 )

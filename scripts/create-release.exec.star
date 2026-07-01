@@ -26,28 +26,7 @@ load(
     "args_parse",
     "args_parser",
 )
-load("//@star/sdk/star/std/process.star", "process_options", "process_run", "process_stderr_inherit", "process_stdout_inherit")
-load("internal/utils.star", "utils_release_exists", "utils_repo_slug")
-
-def _create_release(repo_slug: str, tag: str, is_latest: bool) -> None:
-    print("Creating pre-release {} on {}".format(tag, repo_slug))
-    release_args = ["--latest"] if is_latest else ["--prerelease"]
-    process_run(process_options(
-        command = "gh",
-        args = [
-            "release",
-            "create",
-            tag,
-            "--repo",
-            repo_slug,
-            "--title",
-            tag,
-            "--generate-notes",
-        ] + release_args,
-        stdout = process_stdout_inherit(),
-        stderr = process_stderr_inherit(),
-        check = True,
-    ))
+load("internal/utils.star", "utils_create_release", "utils_release_exists", "utils_repo_slug")
 
 def main():
     """
@@ -86,7 +65,7 @@ def main():
         print("Release {} already exists on {}; skipping creation.".format(tag, repo_slug))
         return
 
-    _create_release(repo_slug, tag, is_latest)
+    utils_create_release(repo_slug, tag, is_latest)
     print("Pre-release {} created on {}.".format(tag, repo_slug))
 
 main()

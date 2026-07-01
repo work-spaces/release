@@ -30,6 +30,7 @@ Example::
 load("//@star/sdk/star/std/args.star", "args_opt", "args_parse", "args_parser")
 load("//@star/sdk/star/std/json.star", "json_decode")
 load("//@star/sdk/star/std/process.star", "process_options", "process_run", "process_stderr_inherit", "process_stdout_capture", "process_stdout_inherit")
+load("internal/utils.star", "utils_expected_binary_names", "utils_repo_slug")
 
 # Path (relative to the workspace) of the helper that dispatches a workflow
 # and follows it to completion. Invoked as a subprocess so it inherits the
@@ -38,25 +39,6 @@ _GH_DISPATCH_SCRIPT = "release/scripts/gh-workflow-dispatch.exec.star"
 
 # Workflow that builds and uploads the per-OS/arch binaries for a tag.
 _BUILD_AND_PUBLISH_WORKFLOW = "build-and-publish.yaml"
-
-# Expected (os, arch) pairs produced by build-and-publish.yaml. The asset
-# names follow the pattern ``spaces-<os>-<arch>-<tag>.zip``.
-_EXPECTED_TARGETS = [
-    ("linux", "x86_64"),
-    ("linux", "aarch64"),
-    ("macos", "x86_64"),
-    ("macos", "aarch64"),
-    ("windows", "x86_64"),
-]
-
-def _repo_slug(owner, repo):
-    return "{}/{}".format(owner, repo)
-
-def _expected_asset_names(tag):
-    return [
-        "spaces-{}-{}-{}.zip".format(os, arch, tag)
-        for (os, arch) in _EXPECTED_TARGETS
-    ]
 
 def _view_release(repo_slug, tag):
     """Return the parsed ``gh release view`` JSON for ``tag``.
@@ -143,8 +125,8 @@ def main():
     assert_on(repo != "", "--repo is required")
     assert_on(tag != "", "--tag is required")
 
-    repo_slug = _repo_slug(owner, repo)
-    expected = _expected_asset_names(tag)
+    repo_slug = utils_repo_slug(owner, repo)
+    expected = utils_expected_binary_names(tag)
 
     print("Repository: {} (host: {})".format(repo_slug, host))
     print("Tag:        {}".format(tag))

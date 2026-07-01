@@ -45,18 +45,33 @@ Behavior:
      script aborts; the caller's parameters do not match the repo state.
 
 4. If a PR already exists with head branch ``update-spaces-<new-version>``,
-   the script fails with a message instructing the user to merge it. No
-   marker file is written, so re-running after the merge will succeed.
+   the script records that the PR must be merged and exits successfully.
+   No marker file is written, so re-running after the merge will re-check
+   ``main`` and continue the release.
 5. Otherwise the script creates branch ``update-spaces-<new-version>``,
    applies the find-and-replace, commits, pushes, runs ``gh pr create``,
-   and then fails with the new PR URL so the user knows it needs review
-   and merging before the release can proceed.
+   and then records the new PR URL so the user knows it needs review and
+   merging before the release can proceed, exiting successfully.
+6. Once the bump has landed on ``main`` (cases 1a/1b above), the script
+   also creates the GitHub release for ``--new-version`` on the target
+   repo (if it does not already exist) before writing the marker file and
+   exiting successfully. Pass ``--latest-release`` to mark it as the latest
+   release rather than a pre-release.
+
+In every terminal case the script writes a JSON status file into the
+workspace ``build`` folder describing the state of the workflow, for
+example ``{"status": "Complete"}`` once the bump has landed, or
+``{"status": "Need to merge PR at <url>"}`` when a human still needs to
+merge the PR. Whenever the status file is written the script exits
+successfully; a human action being required is a normal, expected outcome
+rather than a failure.
 """
 
-load("//@star/sdk/star/std/args.star", "args_opt", "args_parse", "args_parser")
+load("//@star/sdk/star/std/args.star", "args_flag", "args_opt", "args_parse", "args_parser")
 load("//@star/sdk/star/std/fs.star", "fs_exists", "fs_mkdir", "fs_read_text", "fs_write_text")
+load("//@star/sdk/star/std/json.star", "json_write_file")
 load("//@star/sdk/star/std/string.star", "string_contains", "string_regex_find_all", "string_replace")
-load("internal/utils.star", "utils_create_pr", "utils_find_existing_pr", "utils_git", "utils_refresh_main", "utils_repo_slug")
+load("internal/utils.star", "utils_create_pr", "utils_create_release", "utils_find_existing_pr", "utils_git", "utils_refresh_main", "utils_release_exists", "utils_repo_slug")
 
 def _write_marker(marker_file, repo_slug, new_version, status, pr_url):
     """Write a small markdown note recording the outcome."""
@@ -74,6 +89,22 @@ def _write_marker(marker_file, repo_slug, new_version, status, pr_url):
     fs_write_text(marker_file, "\n".join(lines))
     print("Wrote marker file: {}".format(marker_file))
 
+def _write_status(status_file, status):
+    """Write a JSON status file describing the state of the workflow."""
+    parent = status_file.rsplit("/", 1)
+    if len(parent) == 2:
+        fs_mkdir(parent[0], parents = True, exist_ok = True)
+    json_write_file(status_file, {"status": status})
+    print("Wrote status file: {} ({})".format(status_file, status))
+
+def _ensure_release(repo_slug, tag, is_latest):
+    """Create the release for ``tag`` on ``repo_slug`` unless it already exists."""
+    if utils_release_exists(repo_slug, tag):
+        print("Release {} already exists on {}; skipping creation.".format(tag, repo_slug))
+        return
+    utils_create_release(repo_slug, tag, is_latest)
+    print("Release {} created on {}.".format(tag, repo_slug))
+
 def main():
     """
     Open a PR that bumps a pinned version via literal find-and-replace.
@@ -90,7 +121,9 @@ def main():
             args_opt("--new-version", help = "New version (e.g. v0.15.45); used for branch, PR title, and marker file naming"),
             args_opt("--branch-prefix", default = "update-spaces-", help = "Prefix for the update branch name (default 'update-spaces-')"),
             args_opt("--marker-file", default = "", help = "Path to the marker file. Defaults to build/update-version/<repo>-<new-version>.md (relative to the workspace root)"),
+            args_opt("--status-file", default = "", help = "Path to the JSON status file. Defaults to build/update-version/<repo>-<new-version>.status.json (relative to the workspace root)"),
             args_opt("--workdir", help = "Directory of an existing checkout of the target repo (must already exist; the script does not clone)"),
+            args_flag("--latest-release", help = "Mark the created release as the latest release (otherwise it is created as a pre-release)"),
         ],
     )
     parsed = args_parse(spec)
@@ -103,7 +136,9 @@ def main():
     new_version = parsed.get("new_version", "")
     branch_prefix = parsed.get("branch_prefix", "update-spaces-")
     marker_file = parsed.get("marker_file", "")
+    status_file = parsed.get("status_file", "")
     workdir = parsed.get("workdir", "")
+    is_latest = parsed.get("latest_release", False)
 
     assert_on(owner != "", "--owner is required")
     assert_on(repo != "", "--repo is required")
@@ -121,6 +156,8 @@ def main():
     # the workspace root when launched via run_add_exec.
     if marker_file == "":
         marker_file = "build/update-version/{}-{}.md".format(repo, new_version)
+    if status_file == "":
+        status_file = "build/update-version/{}-{}.status.json".format(repo, new_version)
 
     print("Repository:  {}".format(repo_slug))
     print("File:        {}".format(file_path))
@@ -128,11 +165,13 @@ def main():
     print("Replace:     {}".format(replace))
     print("Branch:      {}".format(branch))
     print("Marker:      {}".format(marker_file))
+    print("Status:      {}".format(status_file))
     print("Workdir:     {}".format(workdir))
 
     # Idempotency: if we've already produced a marker for this bump, we're done.
     if fs_exists(marker_file):
         print("Marker file already exists; nothing to do.")
+        _write_status(status_file, "Complete")
         return
 
     utils_refresh_main(workdir)
@@ -151,7 +190,9 @@ def main():
     # Case 1a: bump is already merged on main and --replace is a literal marker.
     if not has_search and has_replace:
         print("`{}` is already present on main; bump has already been merged.".format(replace))
+        _ensure_release(repo_slug, new_version, is_latest)
         _write_marker(marker_file, repo_slug, new_version, "already merged on main", "")
+        _write_status(status_file, "Complete")
         return
 
     # Case 1b: regex replacement is already effectively applied (for example,
@@ -159,7 +200,9 @@ def main():
     # substring). Record and exit.
     if has_search and not has_change:
         print("Regex replacement produced no change; bump has already been merged on main.")
+        _ensure_release(repo_slug, new_version, is_latest)
         _write_marker(marker_file, repo_slug, new_version, "already merged on main", "")
+        _write_status(status_file, "Complete")
         return
 
     assert_on(
@@ -168,20 +211,21 @@ def main():
     )
 
     # Case 2: an open PR with our branch already exists. The bump is in
-    # flight but not yet merged; fail so the caller knows to merge it.
+    # flight but not yet merged; record that a human must merge it and exit
+    # successfully. We do *not* write the marker file, so the next run will
+    # re-check ``main`` and only complete once the PR is merged.
     existing_pr = utils_find_existing_pr(repo_slug, branch)
     if existing_pr != "":
-        assert_on(
-            False,
-            "\n".join([
-                "",
-                "A version-bump PR for {} is already open and has not been merged:".format(repo_slug),
-                "  {}".format(existing_pr),
-                "",
-                "Merge the PR into main, then re-run this rule to continue the release.",
-                "",
-            ]),
-        )
+        print("\n".join([
+            "",
+            "A version-bump PR for {} is already open and has not been merged:".format(repo_slug),
+            "  {}".format(existing_pr),
+            "",
+            "Merge the PR into main, then re-run this rule to continue the release.",
+            "",
+        ]))
+        _write_status(status_file, "Need to merge PR at {}".format(existing_pr))
+        return
 
     # Case 3: do the bump and open a PR.
     assert_on(has_change, "Find-and-replace produced no change in {}".format(file_path))
@@ -211,20 +255,19 @@ def main():
 
     pr_url = utils_create_pr(repo_slug, branch, title, body, workdir)
 
-    # The bump has been opened as a PR but not merged. Fail loudly so the
-    # release pipeline halts and the user is told to merge it. We do *not*
-    # write the marker file here: the next run must re-check ``main`` and
-    # only succeed once the PR is merged.
-    assert_on(
-        False,
-        "\n".join([
-            "",
-            "Opened a version-bump PR on {} that must be merged before continuing:".format(repo_slug),
-            "  {}".format(pr_url) if pr_url != "" else "  (PR URL was not reported by `gh pr create`)",
-            "",
-            "Review and merge the PR into main, then re-run this script to continue the release.",
-            "",
-        ]),
-    )
+    # The bump has been opened as a PR but not merged. Record that a human
+    # must merge it and exit successfully so the caller can inspect the
+    # status file. We do *not* write the marker file here: the next run must
+    # re-check ``main`` and only complete once the PR is merged.
+    print("\n".join([
+        "",
+        "Opened a version-bump PR on {} that must be merged before continuing:".format(repo_slug),
+        "  {}".format(pr_url) if pr_url != "" else "  (PR URL was not reported by `gh pr create`)",
+        "",
+        "Review and merge the PR into main, then re-run this script to continue the release.",
+        "",
+    ]))
+    status = "Need to merge PR at {}".format(pr_url) if pr_url != "" else "Need to merge PR (URL not reported by `gh pr create`)"
+    _write_status(status_file, status)
 
 main()

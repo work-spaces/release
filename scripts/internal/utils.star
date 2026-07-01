@@ -108,5 +108,72 @@ def utils_release_exists(repo_slug: str, tag: str) -> bool:
     ))
     return result["status"] == 0
 
+def utils_create_release(repo_slug: str, tag: str, is_latest: bool) -> None:
+    """Create a GitHub release for ``tag`` with auto-generated notes."""
+    print("Creating pre-release {} on {}".format(tag, repo_slug))
+    release_args = ["--latest"] if is_latest else ["--prerelease"]
+    utils_gh([
+        "release",
+        "create",
+        tag,
+        "--repo",
+        repo_slug,
+        "--title",
+        tag,
+        "--generate-notes",
+    ] + release_args)
+
 def utils_repo_slug(owner, repo):
     return "{}/{}".format(owner, repo)
+
+# Expected (os, arch) pairs produced by build-and-publish.yaml. The asset
+# names follow the pattern ``spaces-<os>-<arch>-<tag>.zip``. This is the single
+# source of truth shared by the scripts that publish and that gate on the
+# per-OS/arch release binaries.
+_EXPECTED_BINARY_TARGETS = [
+    ("linux", "x86_64"),
+    ("linux", "aarch64"),
+    ("macos", "x86_64"),
+    ("macos", "aarch64"),
+    ("windows", "x86_64"),
+]
+
+def utils_expected_binary_names(tag: str) -> list[str]:
+    """Return the expected per-OS/arch binary asset names for ``tag``."""
+    return [
+        "spaces-{}-{}-{}.zip".format(os, arch, tag)
+        for (os, arch) in _EXPECTED_BINARY_TARGETS
+    ]
+
+def utils_release_binaries_published(repo_slug: str, tag: str) -> bool:
+    """Return True if every expected per-OS/arch binary is attached to ``tag``.
+
+    Returns False when the release does not exist or is missing any expected
+    asset, so callers can gate work on the binaries already being published.
+
+    Args:
+      repo_slug: The repository slug (e.g. "owner/repo").
+      tag: The release tag to inspect.
+
+    Returns:
+      True if all expected binaries are attached, otherwise False.
+    """
+    result = process_run(process_options(
+        command = "gh",
+        args = ["release", "view", tag, "--repo", repo_slug, "--json", "assets"],
+        stdout = process_stdout_capture(),
+        stderr = process_stdout_capture(),
+        check = False,
+    ))
+    if result["status"] != 0:
+        return False
+    info = json_decode(result["stdout"])
+    attached = {}
+    for asset in info.get("assets", []):
+        name = asset.get("name", "")
+        if name != "":
+            attached[name] = True
+    for name in utils_expected_binary_names(tag):
+        if not attached.get(name, False):
+            return False
+    return True
