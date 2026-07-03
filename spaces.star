@@ -345,7 +345,7 @@ run_add_exec(
             ":update_spaces_latest_release",
             ":update_install_spaces",
             ":update_spaces_checkout_run",
-            #":update_docs",
+            ":update_docs",
         ],
         files = [
             "scripts/collect-results.exec.star",

@@ -13,16 +13,16 @@ This script consolidates what used to be two separate rules
    for the given tag (the "do the release" step).
 
 A human must review and merge the PR between phases 2 and 3, so the script
-records whenever user input is required: a PR was just opened, an open PR is
-still outstanding, or a stale branch already exists. In every terminal case
-the script writes a JSON status file under ``build/`` describing the state of
-the workflow, for example ``{"status": "Complete"}`` once the release has been
-created, or ``{"status": "Need to merge PR at <url>"}`` when a human still has
-to merge the PR. A human-readable explanation is also written alongside it so
-the reason the release paused is easy to find. Whenever the status file is
-written the script exits successfully; re-run the rule after merging the PR to
-continue, and the release is created automatically once ``main`` contains the
-new version.
+records whenever user input is required: a PR was just opened or an open PR is
+still outstanding. In every terminal case the script writes a JSON status file
+under ``build/`` describing the state of the workflow, for example
+``{"status": "Complete"}`` once the release has been created, or
+``{"status": "Need to merge PR at <url>"}`` when a human still has to merge the
+PR. A human-readable explanation is also written alongside it so the reason
+the release paused is easy to find. Whenever the status file is written the
+script exits successfully; re-run the rule after merging the PR to continue,
+and the release is created automatically once ``main`` contains the new
+version.
 """
 
 load(
@@ -32,7 +32,7 @@ load(
     "args_parse",
     "args_parser",
 )
-load("//@star/sdk/star/std/fs.star", "fs_mkdir", "fs_write_text")
+load("//@star/sdk/star/std/fs.star", "fs_exists", "fs_mkdir", "fs_write_text")
 load("//@star/sdk/star/std/json.star", "json_write_file")
 load(
     "//@star/sdk/star/std/process.star",
@@ -98,6 +98,22 @@ def _create_release(repo_slug, tag, is_latest):
         check = True,
     ))
 
+def _spaces_tag_exists_on_main(workdir, spaces_tag):
+    """Return True when ``main`` contains ``star/.../spaces/<spaces_tag>.star``."""
+    if spaces_tag == "":
+        return False
+
+    # Ensure the packages checkout is on the latest main before checking for
+    # the spaces version marker file.
+    utils_refresh_main(workdir)
+
+    spaces_file = "{}/star/github.com/work-spaces/spaces/{}.star".format(workdir, spaces_tag)
+    if not fs_exists(spaces_file):
+        print("Could not find {} on main; treating spaces {} as not merged yet.".format(spaces_file, spaces_tag))
+        return False
+
+    return True
+
 def main():
     """
     Bump the packages repo, open a PR, and create the release once merged.
@@ -155,16 +171,10 @@ def main():
         _write_status(status_file, "Complete")
         return
 
-    # If main already contains the bump (the PR was merged), skip straight to
-    # publishing the release.
-    utils_refresh_main(workdir)
-    latest_main_commit_message = utils_git(
-        ["log", "-1", "--pretty=%B", "origin/main"],
-        cwd = workdir,
-        capture = True,
-    )["stdout"].strip()
-    if tag in latest_main_commit_message:
-        print("origin/main already contains {}; creating the release.".format(tag))
+    # If main already contains the expected spaces tag (the PR was merged),
+    # skip straight to publishing the release.
+    if _spaces_tag_exists_on_main(workdir, spaces_version):
+        print("origin/main already contains spaces {}; creating the release.".format(spaces_version))
         _create_release(repo_slug, tag, is_latest)
         print("Release {} created on {}.".format(tag, repo_slug))
         _write_status(status_file, "Complete")
@@ -184,36 +194,10 @@ def main():
         ])
         return
 
-    # A branch already exists without an open PR. Fail loudly so we do not
-    # accidentally overwrite prior work.
-    local_branch_exists = utils_git(
-        ["show-ref", "--verify", "--quiet", "refs/heads/{}".format(branch)],
-        cwd = workdir,
-        check = False,
-    )["status"] == 0
-    remote_branch_exists = utils_git(
-        ["ls-remote", "--exit-code", "--heads", "origin", branch],
-        cwd = workdir,
-        check = False,
-    )["status"] == 0
-    if local_branch_exists or remote_branch_exists:
-        branch_locations = []
-        if local_branch_exists:
-            branch_locations.append("local checkout")
-        if remote_branch_exists:
-            branch_locations.append("origin")
-        locations = " and ".join(branch_locations)
-        _record_action(halt_file, status_file, "Delete stale branch `{}` in {} for {}, then re-run".format(branch, locations, repo_slug), [
-            "",
-            "Branch `{}` already exists in {} for {}; refusing to create a new one.".format(branch, locations, repo_slug),
-            "",
-            "Delete the existing branch (or merge/reset the existing change), then re-run this rule.",
-            "",
-        ])
-        return
-
-    # Make the changes, commit, push, and open a PR.
-    utils_git(["switch", "-c", branch], cwd = workdir)
+    # Make (or refresh) the update branch, then create/update the PR. We
+    # intentionally reuse the same branch name and force-push so stale branch
+    # cleanup is not required for retried runs.
+    utils_git(["switch", "-C", branch], cwd = workdir)
     utils_run("script/check-latest.exec.star", args = [], cwd = workdir)
     utils_git(["add", "-A"], cwd = workdir)
 

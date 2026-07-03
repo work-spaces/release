@@ -2,14 +2,17 @@
 """
 Update and publish work-spaces.github.io docs for a released spaces tag.
 
-This script orchestrates the docs publish flow by composing existing release
-helpers:
+This script orchestrates the docs publish flow:
 
-1. Uses ``release/scripts/update-version.exec.star`` to bump versions in the docs repo using regex search:
+1. Regenerates ``internal/version.star`` in the docs repo with versions from:
 
-   - ``SPACES_VERSION`` in ``spaces.star`` from ``--spaces-tag``
-   - ``@star/sdk`` ``rev`` in ``0.checkout.spaces.star`` from ``--sdk-tag``
-   - ``@star/packages`` ``rev`` in ``0.checkout.spaces.star`` from ``--packages-tag``
+   - ``SPACES_VERSION`` from ``--spaces-tag`` (without the leading ``v``)
+   - ``SDK_REV`` from ``--sdk-tag``
+   - ``PACKAGE_REV`` from ``--packages-tag``
+
+   If the generated file differs from ``main``, it commits the change on a
+   branch and opens a PR. The script then writes a status file of the form
+   ``Need to merge PR at <url>`` and exits successfully.
 2. Refreshes the docs checkout to ``origin/main`` and verifies docs generation
    by running:
 
@@ -21,54 +24,32 @@ helpers:
 4. Uses ``release/scripts/gh-workflow-dispatch.exec.star`` to dispatch
    ``pages.yaml`` and follow it to completion.
 
-Important behavior inherited from ``update-version.exec.star``:
-
-- On first run, if the version bump is not yet merged, it opens a PR and
-  records the required action ("Need to merge PR at <url>") in its status
-  file instead of failing.
-- This script reads that status. If any bump still requires a human action,
-  it records that action in its own JSON status file and exits successfully
-  without continuing to verification, release creation, or workflow dispatch.
-- Re-run this script after the PR is merged to continue the flow.
-
 Status file:
 
 - A JSON status file is written into the workspace ``build`` folder describing
   the state of the workflow, for example ``{"status": "Complete"}`` once the
   whole flow finishes, or ``{"status": "Need to merge PR at <url>"}`` when a
-  human still needs to merge a docs version-bump PR. Whenever the status file
+  human still needs to merge the docs version-bump PR. Whenever the status file
   is written the script exits successfully.
 """
 
 load("//@star/sdk/star/std/args.star", "args_opt", "args_parse", "args_parser")
-load("//@star/sdk/star/std/fs.star", "fs_exists", "fs_mkdir")
-load("//@star/sdk/star/std/json.star", "json_read_file", "json_write_file")
-load("//@star/sdk/star/std/string.star", "string_regex_find_all")
-load("internal/utils.star", "utils_refresh_main", "utils_repo_slug", "utils_run")
+load("//@star/sdk/star/std/fs.star", "fs_exists", "fs_mkdir", "fs_read_text", "fs_write_text")
+load("//@star/sdk/star/std/json.star", "json_write_file")
+load(
+    "internal/utils.star",
+    "utils_create_pr",
+    "utils_find_existing_pr",
+    "utils_git",
+    "utils_refresh_main",
+    "utils_repo_slug",
+    "utils_run",
+)
 
-_UPDATE_VERSION_SCRIPT = "release/scripts/update-version.exec.star"
 _CREATE_RELEASE_SCRIPT = "release/scripts/create-release.exec.star"
 _GH_DISPATCH_SCRIPT = "release/scripts/gh-workflow-dispatch.exec.star"
 
-# Matches lines like:
-#   SPACES_VERSION = "0.15.45"
-#   SPACES_VERSION="0.15.45.docs"
-#   SPACES_VERSION = "0.15.45-alpha.1"
-# Capture groups:
-#   1) `SPACES_VERSION = "` prefix (including optional spaces)
-#   2) optional version context and closing quote (for example: `.docs"`)
-_SPACES_VERSION_LINE_REGEX = r'(SPACES_VERSION\s*=\s*")\d+\.\d+\.\d+([\w.+-]*")'
-
-# In docs/work-spaces.github.io/0.checkout.spaces.star, match the sdk repo block
-# and replace only the `rev` value.
-_SDK_REV_LINE_REGEX = r'("url"\s*:\s*"https://github.com/work-spaces/sdk",\s*"rev"\s*:\s*")v\d+\.\d+\.\d+([\w.+-]*")'
-
-# In docs/work-spaces.github.io/0.checkout.spaces.star, match the packages repo
-# block and replace only the `rev` value.
-_PACKAGES_REV_LINE_REGEX = r'("url"\s*:\s*"https://github.com/work-spaces/packages",\s*"rev"\s*:\s*")v\d+\.\d+\.\d+([\w.+-]*")'
-
-_CHECKOUT_FILE_PATH = "0.checkout.spaces.star"
-_SPACES_FILE_PATH = "spaces.star"
+_VERSION_FILE_PATH = "internal/version.star"
 
 def _arg(parsed: dict, key: str, fallback = ""):
     """Best-effort compatibility helper for dashed/underscored arg names."""
@@ -83,15 +64,6 @@ def _write_status(status_file: str, status: str) -> None:
     json_write_file(status_file, {"status": status})
     print("Wrote status file: {} ({})".format(status_file, status))
 
-def _read_status(status_file: str) -> str:
-    """Read the ``status`` field from a JSON status file, or "" if absent."""
-    if not fs_exists(status_file):
-        return ""
-    decoded = json_read_file(status_file)
-    if type(decoded) != "dict":
-        return ""
-    return decoded.get("status", "")
-
 def _spaces_version_from_tag(tag: str) -> str:
     assert_on(tag != "", "--spaces-tag is required")
     assert_on(tag.startswith("v"), "--spaces-tag must start with 'v' (for example: v0.15.45)")
@@ -99,102 +71,87 @@ def _spaces_version_from_tag(tag: str) -> str:
     assert_on(version != "", "--spaces-tag has no version after the leading 'v'")
     return version
 
-def _spaces_core_version_from_tag(tag: str) -> str:
-    version = _spaces_version_from_tag(tag)
-    matches = string_regex_find_all(r"^\d+\.\d+\.\d+", version)
-    for match in matches:
-        return match.get("match", "")
-    assert_on(False, "--spaces-tag must contain a semver core x.y.z")
-    return ""
+def _render_version_file(spaces_version: str, sdk_tag: str, packages_tag: str) -> str:
+    return "\n".join([
+        "\"\"\"",
+        "Spaces version",
+        "\"\"\"",
+        "",
+        "SPACES_VERSION = \"{}\"".format(spaces_version),
+        "SDK_REV = \"{}\"".format(sdk_tag),
+        "PACKAGE_REV = \"{}\"".format(packages_tag),
+        "",
+    ])
 
-def _run_update_version(owner: str, repo: str, file_path: str, workdir: str, search: str, replace: str, new_version: str, branch_prefix: str, status_file: str) -> str:
-    utils_run(
-        _UPDATE_VERSION_SCRIPT,
-        args = [
-            "--owner={}".format(owner),
-            "--repo={}".format(repo),
-            "--file-path={}".format(file_path),
-            "--workdir={}".format(workdir),
-            "--search={}".format(search),
-            "--replace={}".format(replace),
-            "--new-version={}".format(new_version),
-            "--branch-prefix={}".format(branch_prefix),
-            "--status-file={}".format(status_file),
+def _run_update_versions_file(owner: str, repo: str, workdir: str, spaces_version: str, sdk_tag: str, packages_tag: str, status_file: str) -> str:
+    """Regenerate docs/internal/version.star and open a PR if needed."""
+    repo_slug = utils_repo_slug(owner, repo)
+    branch = "update-docs-versions-{}-{}-{}".format(spaces_version, sdk_tag, packages_tag)
+    target_path = "{}/{}".format(workdir, _VERSION_FILE_PATH)
+
+    expected = _render_version_file(spaces_version, sdk_tag, packages_tag)
+
+    utils_refresh_main(workdir)
+    assert_on(fs_exists(target_path), "{} does not exist in {}".format(_VERSION_FILE_PATH, repo_slug))
+
+    current = fs_read_text(target_path)
+    if current == expected:
+        print("{} is already up to date on main.".format(_VERSION_FILE_PATH))
+        _write_status(status_file, "Complete")
+        return "Complete"
+
+    existing_pr = utils_find_existing_pr(repo_slug, branch)
+    if existing_pr != "":
+        print("\n".join([
+            "",
+            "A docs version-file PR for {} is already open and has not been merged:".format(repo_slug),
+            "  {}".format(existing_pr),
+            "",
+            "Merge the PR into main, then re-run this rule to continue the release.",
+            "",
+        ]))
+        status = "Need to merge PR at {}".format(existing_pr)
+        _write_status(status_file, status)
+        return status
+
+    fs_write_text(target_path, expected)
+
+    utils_git(["checkout", "-B", branch], cwd = workdir)
+    utils_git(["add", _VERSION_FILE_PATH], cwd = workdir)
+
+    title = "Update docs versions: spaces {}, sdk {}, packages {}".format(spaces_version, sdk_tag, packages_tag)
+    body = "Automated docs version update: regenerate `{}`.".format(_VERSION_FILE_PATH)
+
+    utils_git(
+        [
+            "-c",
+            "user.name=spaces-release-bot",
+            "-c",
+            "user.email=spaces-release-bot@users.noreply.github.com",
+            "commit",
+            "-m",
+            title,
+            "-m",
+            body,
         ],
-        check = True,
-    )
-    return _read_status(status_file)
-
-def _run_update_spaces_version(owner: str, repo: str, workdir: str, spaces_tag: str, status_file: str) -> str:
-    # Keep any existing context after x.y.z (for example `.docs`) while
-    # replacing only the semver core from `--spaces-tag`.
-    # Use ${1}/${2} (braced) so the version text that follows $1 is not parsed
-    # as part of a Rust-regex capture-group name.
-    replace = "${{1}}{}${{2}}".format(_spaces_core_version_from_tag(spaces_tag))
-    return _run_update_version(
-        owner,
-        repo,
-        _SPACES_FILE_PATH,
-        workdir,
-        _SPACES_VERSION_LINE_REGEX,
-        replace,
-        spaces_tag,
-        "update-docs-spaces-",
-        status_file,
-    )
-
-def _run_update_sdk_version(owner: str, repo: str, workdir: str, sdk_tag: str, status_file: str) -> str:
-    # Braced ${1}/${2}: an unbraced $1 would greedily consume the leading `v`
-    # of the tag as part of the capture-group name (Rust regex replacement).
-    replace = "${{1}}{}${{2}}".format(sdk_tag)
-    return _run_update_version(
-        owner,
-        repo,
-        _CHECKOUT_FILE_PATH,
-        workdir,
-        _SDK_REV_LINE_REGEX,
-        replace,
-        sdk_tag,
-        "update-docs-sdk-",
-        status_file,
-    )
-
-def _run_update_packages_version(owner: str, repo: str, workdir: str, packages_tag: str, status_file: str) -> str:
-    # Braced ${1}/${2}: an unbraced $1 would greedily consume the leading `v`
-    # of the tag as part of the capture-group name (Rust regex replacement).
-    replace = "${{1}}{}${{2}}".format(packages_tag)
-    return _run_update_version(
-        owner,
-        repo,
-        _CHECKOUT_FILE_PATH,
-        workdir,
-        _PACKAGES_REV_LINE_REGEX,
-        replace,
-        packages_tag,
-        "update-docs-packages-",
-        status_file,
-    )
-
-def _verify_docs_build(workdir: str, docs_target: str) -> None:
-    print("Verifying docs archive target {} in {}".format(docs_target, workdir))
-    utils_run(
-        "spaces",
-        args = ["run", docs_target],
         cwd = workdir,
-        check = True,
     )
+    utils_git(["push", "--force", "origin", branch], cwd = workdir)
 
-def _create_docs_release(host: str, owner: str, repo: str, tag: str) -> None:
-    utils_run(
-        _CREATE_RELEASE_SCRIPT,
-        args = [
-            "--host={}".format(host),
-            "--owner={}".format(owner),
-            "--repo={}".format(repo),
-            "--tag={}".format(tag),
-        ],
-        check = True,
-    )
+    pr_url = utils_create_pr(repo_slug, branch, title, body, workdir)
+
+    print("\n".join([
+        "",
+        "Opened a docs version-bump PR on {} that must be merged before continuing:".format(repo_slug),
+        "  {}".format(pr_url) if pr_url != "" else "  (PR URL was not reported by `gh pr create`)",
+        "",
+        "Review and merge the PR into main, then re-run this script to continue the release.",
+        "",
+    ]))
+
+    status = "Need to merge PR at {}".format(pr_url) if pr_url != "" else "Need to merge PR (URL not reported by `gh pr create`)"
+    _write_status(status_file, status)
+    return status
 
 def _dispatch_pages_workflow(host: str, owner: str, repo: str, workflow: str, ref: str, poll_interval: int, timeout_seconds: int) -> None:
     utils_run(
@@ -226,10 +183,10 @@ def main():
             args_opt("--sdk-tag", help = "SDK release tag (e.g. v0.15.45)"),
             args_opt("--packages-tag", help = "Packages release tag (e.g. v0.15.45)"),
             args_opt("--workdir", default = "docs/work-spaces.github.io", help = "Directory of the docs repo checkout"),
-            args_opt("--file-path", default = "docs/work-spaces.github.io", help = "Path to the docs repo checkout (informational; version updates target 0.checkout.spaces.star and spaces.star)"),
+            args_opt("--file-path", default = "docs/work-spaces.github.io", help = "Path to the docs repo checkout (informational; version generation targets internal/version.star)"),
             args_opt("--docs-target", default = "//work-spaces.github.io:work-spaces.github.io_archive", help = "Docs archive target to run for verification"),
             args_opt("--workflow", default = "pages.yaml", help = "Workflow filename to dispatch"),
-            args_opt("--dispatch-ref", default = "", help = "Ref for workflow dispatch. Defaults to --spaces-tag."),
+            args_opt("--dispatch-ref", default = "", help = "Ref for workflow dispatch. Defaults to main."),
             args_opt("--poll-interval", type = "int", default = 10, help = "Seconds between workflow status polls"),
             args_opt("--timeout", type = "int", default = 1800, help = "Seconds to wait for workflow completion"),
             args_opt("--status-file", default = "", help = "Path to the JSON status file. Defaults to build/update-docs/<repo>-<spaces-tag>.status.json (relative to the workspace root)"),
@@ -268,7 +225,7 @@ def main():
     sdk_version = _spaces_version_from_tag(sdk_tag)
     packages_version = _spaces_version_from_tag(packages_tag)
     if dispatch_ref == "":
-        dispatch_ref = spaces_tag
+        dispatch_ref = "main"
 
     repo_slug = utils_repo_slug(owner, repo)
 
@@ -276,9 +233,7 @@ def main():
     if status_file == "":
         status_file = "build/update-docs/{}-{}.status.json".format(repo, spaces_tag)
     status_dir = "build/update-docs"
-    spaces_status_file = "{}/{}-spaces-{}.status.json".format(status_dir, repo, spaces_tag)
-    sdk_status_file = "{}/{}-sdk-{}.status.json".format(status_dir, repo, sdk_tag)
-    packages_status_file = "{}/{}-packages-{}.status.json".format(status_dir, repo, packages_tag)
+    versions_status_file = "{}/{}-versions-{}-{}-{}.status.json".format(status_dir, repo, spaces_tag, sdk_tag, packages_tag)
 
     print("Repository:    {} (host: {})".format(repo_slug, host))
     print("spaces tag:    {}".format(spaces_tag))
@@ -294,42 +249,16 @@ def main():
     print("Dispatch ref:  {}".format(dispatch_ref))
     print("Status file:   {}".format(status_file))
 
-    # Step 1: bump versions in docs repo (opens PRs if needed). Each bump
-    # records its own status. If any bump still requires a human action (for
-    # example merging a PR), record that action and stop successfully; the
-    # next run will resume once the PR has landed on main.
-    print("\nUpdating SPACES_VERSION in {} for spaces release...".format(_SPACES_FILE_PATH))
-    status = _run_update_spaces_version(owner, repo, workdir, spaces_tag, spaces_status_file)
+    # Step 1: regenerate internal/version.star (opens a PR if needed). If a
+    # merge is required, record the required action and stop successfully.
+    print("\nRegenerating {} for docs release...".format(_VERSION_FILE_PATH))
+    status = _run_update_versions_file(owner, repo, workdir, spaces_version, sdk_tag, packages_tag, versions_status_file)
     if status != "Complete":
-        print("Spaces version bump requires action: {}".format(status))
+        print("Docs version-file update requires action: {}".format(status))
         _write_status(status_file, status)
         return
 
-    print("\nUpdating SDK rev in {} for SDK release...".format(_CHECKOUT_FILE_PATH))
-    status = _run_update_sdk_version(owner, repo, workdir, sdk_tag, sdk_status_file)
-    if status != "Complete":
-        print("SDK version bump requires action: {}".format(status))
-        _write_status(status_file, status)
-        return
-
-    print("\nUpdating packages rev in {} for packages release...".format(_CHECKOUT_FILE_PATH))
-    status = _run_update_packages_version(owner, repo, workdir, packages_tag, packages_status_file)
-    if status != "Complete":
-        print("Packages version bump requires action: {}".format(status))
-        _write_status(status_file, status)
-        return
-
-    # Ensure local checkout is synchronized with main before verification,
-    # including the case where update-version was a no-op due to marker reuse.
-    utils_refresh_main(workdir)
-
-    # Step 2: ensure docs archive builds after the version update.
-    _verify_docs_build(workdir, docs_target)
-
-    # Step 3: create a docs release that matches the current spaces tag.
-    _create_docs_release(host, owner, repo, spaces_tag)
-
-    # Step 4: dispatch docs/pages workflow and wait until completion.
+    # dispatch docs/pages workflow and wait until completion.
     _dispatch_pages_workflow(host, owner, repo, workflow, dispatch_ref, poll_interval, timeout_seconds)
 
     print("Docs update/publish flow completed successfully for {} on {}.".format(spaces_tag, repo_slug))
