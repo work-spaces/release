@@ -4,10 +4,10 @@ Procedure for releasing a new version of spaces.
 See the README for details.
 """
 
-load("//@star/sdk/star/deps.star", "deps")
-load("//@star/sdk/star/run.star", "run_add_exec")
-load("//@star/sdk/star/visibility.star", "visibility_private")
-load("//@star/sdk/star/ws.star", "workspace_get_env_var", "workspace_load_value")
+load("//@star/prelude/rules/deps.star", "deps")
+load("//@star/prelude/rules/run.star", "run_add_exec", "run_load_env")
+load("//@star/prelude/rules/visibility.star", "visibility_private")
+load("//@star/prelude/rules/ws.star", "workspace_get_env_var", "workspace_load_value")
 
 STARLARK_FILES = [
     "0.checkout.spaces.star",
@@ -27,6 +27,7 @@ STARLARK_FILES = [
 SPACES_INSTALL_ROOT = workspace_get_env_var("SPACES_INSTALL_ROOT")
 
 spaces_tag = workspace_load_value("RELEASE_SPACES_TAG")
+previous_spaces_tag = workspace_load_value("RELEASE_PREVIOUS_SPACES_TAG") or "unknown"
 sdk_tag = workspace_load_value("RELEASE_SDK_TAG")
 packages_tag = workspace_load_value("RELEASE_PACKAGES_TAG")
 
@@ -40,6 +41,26 @@ run_add_exec(
     deps = deps(files = STARLARK_FILES),
     visibility = visibility_private(),
     working_directory = ".",
+)
+
+release_notes_file = "build/release-notes.md"
+
+run_add_exec(
+    "generate_release_notes",
+    command = "release/scripts/generate-release-notes.exec.star",
+    args = [
+        "--owner=work-spaces",
+        "--repo=spaces",
+        "--tag=" + previous_spaces_tag,
+        "--workdir=spaces",
+        "--notes-file=" + release_notes_file,
+        "--new-tag=" + spaces_tag,
+    ],
+    deps = deps(files = ["//spaces/**"]),
+    target_files = ["//{}".format(release_notes_file)],
+    env = {
+        "GH_TOKEN": run_load_env("GH_TOKEN"),
+    },
 )
 
 run_add_exec(
