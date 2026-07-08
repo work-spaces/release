@@ -2,13 +2,14 @@
 """
 Create a GitHub release using the ``gh`` CLI if it does not already exist.
 
-Given a host, owner, repo, and tag, this script:
+Given a host, owner, repo, and tag (plus optional release-notes file), this script:
 
 1. Uses ``gh release view`` to check whether a release for the given tag
    already exists on the remote. If so, creation is skipped.
 2. Otherwise, runs ``gh release create`` to create a new pre-release. The
-   release tag is created from the command line arg, and the title and
-   release notes are generated automatically by GitHub.
+   release tag is created from the command line arg and the title is set to
+   the tag. If ``--release-notes`` is provided, the markdown in that file is
+   used as release notes; otherwise GitHub auto-generated notes are used.
 
 Example::
 
@@ -16,7 +17,8 @@ Example::
         --host=github.com \\
         --owner=work-spaces \\
         --repo=spaces \\
-        --tag=v0.15.45
+        --tag=v0.15.45 \\
+        --release-notes=build/release-notes.md
 """
 
 load(
@@ -40,6 +42,7 @@ def main():
             args_opt("--owner", help = "Repository owner (user or organization)"),
             args_opt("--repo", help = "Repository name"),
             args_opt("--tag", help = "Tag to create the release for (will be created on the remote)"),
+            args_opt("--release-notes", default = "", help = "Optional path to markdown release notes used for the release body"),
             args_flag("--latest-release", help = "Update the latest release on the repository (otherwise, use prerelease)"),
         ],
     )
@@ -49,6 +52,7 @@ def main():
     owner = parsed.get("owner", "")
     repo = parsed.get("repo", "")
     tag = parsed.get("tag", "")
+    release_notes = parsed.get("release_notes", "")
     is_latest = parsed.get("latest_release", False)
 
     assert_on(host != "", "--host is required")
@@ -60,12 +64,14 @@ def main():
 
     print("Repository: {} (host: {})".format(repo_slug, host))
     print("Tag:        {}".format(tag))
+    if release_notes != "":
+        print("Notes file: {}".format(release_notes))
 
     if utils_release_exists(repo_slug, tag):
         print("Release {} already exists on {}; skipping creation.".format(tag, repo_slug))
         return
 
-    utils_create_release(repo_slug, tag, is_latest)
+    utils_create_release(repo_slug, tag, is_latest, release_notes)
     print("Pre-release {} created on {}.".format(tag, repo_slug))
 
 main()

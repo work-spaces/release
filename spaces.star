@@ -59,7 +59,7 @@ run_add_exec(
     deps = deps(files = ["//spaces/**"]),
     target_files = ["//{}".format(release_notes_file)],
     env = {
-        "GH_TOKEN": run_load_env("GH_TOKEN"),
+        "GH_TOKEN": workspace_get_env_var("GH_TOKEN"),
     },
 )
 
@@ -136,10 +136,12 @@ run_add_exec(
         "--owner=work-spaces",
         "--repo=spaces",
         "--tag={}".format(spaces_tag),
+        "--release-notes={}".format(release_notes_file),
     ],
     help = "",
     deps = deps(
         rules = [
+            ":generate_release_notes",
             ":testlab",
         ] + tag_deps,
         files = [

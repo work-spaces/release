@@ -108,15 +108,22 @@ def utils_release_exists(repo_slug: str, tag: str) -> bool:
     ))
     return result["status"] == 0
 
-def utils_create_release(repo_slug: str, tag: str, is_latest: bool) -> None:
-    """Create a GitHub pre-release for ``tag`` with auto-generated notes.
+def utils_create_release(repo_slug: str, tag: str, is_latest: bool, release_notes_file: str = "") -> None:
+    """Create a GitHub pre-release for ``tag``.
 
     The release is created as a pre-release (or the latest release when
     ``is_latest`` is True). Binaries are attached afterwards while the release
     is still a pre-release, before it is promoted to the latest release.
+
+    When ``release_notes_file`` is provided, the markdown from that file is
+    used as release notes. Otherwise GitHub auto-generated notes are used.
     """
     print("Creating {} {} on {}".format("release" if is_latest else "pre-release", tag, repo_slug))
     release_args = ["--latest"] if is_latest else ["--prerelease"]
+    notes_args = ["--generate-notes"]
+    if release_notes_file != "":
+        assert_on(fs_exists(release_notes_file), "release notes file does not exist: {}".format(release_notes_file))
+        notes_args = ["--notes-file", release_notes_file]
     utils_gh([
         "release",
         "create",
@@ -125,8 +132,7 @@ def utils_create_release(repo_slug: str, tag: str, is_latest: bool) -> None:
         repo_slug,
         "--title",
         tag,
-        "--generate-notes",
-    ] + release_args)
+    ] + notes_args + release_args)
 
 def utils_repo_slug(owner, repo):
     return "{}/{}".format(owner, repo)
