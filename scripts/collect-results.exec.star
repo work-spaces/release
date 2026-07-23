@@ -86,7 +86,7 @@ def main():
 
     print("\nThe following action(s) are required before the release can continue:")
     for status_file, action in pending:
-        print("  - {}: {}".format(status_file, action))
+        print("- {}".format(action))
     print("")
     sys_exit(1)
 
