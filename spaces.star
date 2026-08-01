@@ -22,6 +22,7 @@ STARLARK_FILES = [
     "scripts/update-packages.exec.star",
     "scripts/update-version.exec.star",
     "scripts/validate-tag.exec.star",
+    "scripts/check-spaces-version.exec.star",
 ]
 
 SPACES_INSTALL_ROOT = workspace_get_env_var("SPACES_INSTALL_ROOT")
@@ -72,6 +73,16 @@ run_add_exec(
     working_directory = ".",
 )
 
+run_add_exec(
+    "check_spaces_version",
+    command = "release/scripts/check-spaces-version.exec.star",
+    args = [
+        "--spaces-version={}".format(spaces_tag),
+        "--spaces-repo-path=spaces",
+    ],
+    help = "Ensure RELEASE_SPACES_TAG matches spaces crate versions in Cargo.toml",
+)
+
 # Depends on spaces install release to use the latest
 # Runs the test labs. Skips itself when the release binaries for spaces_tag are
 # already published (see release/scripts/testlab.exec.star).
@@ -85,7 +96,10 @@ run_add_exec(
     ],
     help = "Checkout and run the testlab including the rcache test",
     deps = deps(
-        rules = ["//spaces:install_release"],
+        rules = [
+            "//spaces:install_release",
+            ":check_spaces_version",
+        ],
         files = [
             "scripts/testlab.exec.star",
             "//{}/bin/spaces".format(SPACES_INSTALL_ROOT),
