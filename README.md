@@ -3,10 +3,10 @@
 This repo is used to test and release `spaces`.
 
 ```sh
-export SPACES_TAG=v0.20.1
+export SPACES_TAG=v0.20.2
 export PREVIOUS_SPACES_TAG=v0.20.0
 export SDK_TAG=v0.4.0
-export PACKAGES_TAG=v0.2.65
+export PACKAGES_TAG=v0.2.66
 spaces checkout-repo \
     --url=https://github.com/work-spaces/release \
     --rev=main \
