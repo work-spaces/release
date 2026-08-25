@@ -5,8 +5,8 @@ This repo is used to test and release `spaces`.
 ```sh
 export SPACES_TAG=v0.21.1
 export PREVIOUS_SPACES_TAG=v0.21.0
-export SDK_TAG=v0.4.0
-export PACKAGES_TAG=v0.2.70
+export SDK_TAG=v0.5.0
+export PACKAGES_TAG=v0.2.71
 spaces checkout-repo \
     --url=https://github.com/work-spaces/release \
     --rev=main \
