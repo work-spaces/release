@@ -3,8 +3,8 @@
 This repo is used to test and release `spaces`.
 
 ```sh
-export SPACES_TAG=v0.21.0
-export PREVIOUS_SPACES_TAG=v0.20.8
+export SPACES_TAG=v0.21.1
+export PREVIOUS_SPACES_TAG=v0.21.0
 export SDK_TAG=v0.4.0
 export PACKAGES_TAG=v0.2.70
 spaces checkout-repo \
