@@ -25,7 +25,7 @@ STARLARK_FILES = [
     "scripts/check-spaces-version.exec.star",
 ]
 
-SPACES_INSTALL_ROOT = workspace_get_env_var("SPACES_INSTALL_ROOT")
+SPACES_INSTALL_ROOT = workspace_load_value("SPACES_INSTALL_ROOT")
 
 spaces_tag = workspace_load_value("RELEASE_SPACES_TAG")
 previous_spaces_tag = workspace_load_value("RELEASE_PREVIOUS_SPACES_TAG") or "unknown"
@@ -169,6 +169,11 @@ run_add_exec(
     command = "release/scripts/publish-release-binaries.exec.star",
     args = [
         "--tag={}".format(spaces_tag),
+        "--platform=linux-x86_64",
+        "--platform=linux-aarch64",
+        # This is not well supported in Github CI
+        #"--platform=macos-x86_64",
+        "--platform=macos-aarch64",
     ],
     help = "",
     deps = deps(

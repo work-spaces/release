@@ -7,22 +7,23 @@ load(
     "gh_add",
 )
 load(
-    "//@star/sdk/star/asset.star",
+    "//@star/prelude/rules/asset.star",
     "asset_content",
 )
 load(
-    "//@star/sdk/star/checkout.star",
+    "//@star/prelude/rules/checkout.star",
     "checkout_add_any_assets",
     "checkout_add_env_vars",
     "checkout_add_repo",
+    "checkout_store_value",
 )
 load(
-    "//@star/sdk/star/env.star",
+    "//@star/prelude/rules/env.star",
     "env_assign",
     "env_script",
 )
 load(
-    "//@star/sdk/star/ws.star",
+    "//@star/prelude/rules/ws.star",
     "workspace_get_absolute_path",
 )
 
@@ -34,11 +35,6 @@ gh_add(
 checkout_add_env_vars(
     "spaces_install_env",
     vars = [
-        env_assign(
-            "SPACES_INSTALL_ROOT",
-            value = workspace_get_absolute_path() + "/build/install",
-            help = "Install the spaces binary in the workspace",
-        ),
         env_script(
             "GH_TOKEN",
             script = "sysroot/bin/gh auth token",
@@ -49,6 +45,8 @@ checkout_add_env_vars(
     ],
     deps = [":gh2"],
 )
+
+checkout_store_value("SPACES_INSTALL_ROOT", workspace_get_absolute_path() + "/build/install")
 
 checkout_add_repo(
     "install-spaces",
